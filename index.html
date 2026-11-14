@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#17212b">
+<title>FLIP — аркада</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{
+  --bg:#17212b;
+  --surface:#232e3c;
+  --text:#ffffff;
+  --hint:#7f91a4;
+  --accent:#5288c1;
+  --link:#6ab3f3;
+  --danger:#ec3942;
+  --accent-glow:rgba(82,136,193,.55);
+  --accent-soft:rgba(82,136,193,.18);
+  --wall:54px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{
+  margin:0;padding:0;height:100%;
+  background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  overflow:hidden;overscroll-behavior:none;
+  user-select:none;-webkit-user-select:none;
+  touch-action:none;
+  -webkit-font-smoothing:antialiased;
+}
+#app{
+  position:relative;width:100%;max-width:560px;
+  height:100vh;height:100dvh;
+  margin:0 auto;overflow:hidden;background:var(--bg);
+}
+canvas{display:block;width:100%;height:100%;touch-action:none;}
+
+/* ---------- HUD ---------- */
+#hud{
+  position:absolute;top:0;left:0;right:0;height:var(--wall);
+  display:flex;align-items:center;justify-content:center;
+  pointer-events:none;z-index:2;
+}
+#score{
+  font-size:clamp(18px,5.2vw,24px);font-weight:800;letter-spacing:.05em;
+  line-height:1;color:var(--text);
+  text-shadow:0 0 18px var(--accent-glow);
+  transform-origin:center;
+}
+#score.pop{animation:pop .28s cubic-bezier(.2,1.6,.4,1);}
+@keyframes pop{0%{transform:scale(1);}45%{transform:scale(1.3);}100%{transform:scale(1);}}
+#best{
+  position:absolute;right:14px;top:50%;transform:translateY(-50%);
+  font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--hint);
+  white-space:nowrap;
+}
+#mute{
+  position:absolute;left:8px;top:50%;transform:translateY(-50%);
+  pointer-events:auto;background:none;border:0;padding:8px;
+  font-size:15px;line-height:1;color:var(--hint);cursor:pointer;
+  opacity:.8;border-radius:50%;
+}
+#mute:active{opacity:1;}
+
+/* ---------- Overlay ---------- */
+#overlay{
+  position:absolute;inset:0;z-index:5;
+  display:flex;align-items:center;justify-content:center;
+  padding:24px;
+  background:rgba(0,0,0,.52);
+  -webkit-backdrop-filter:blur(9px);backdrop-filter:blur(9px);
+  opacity:0;visibility:hidden;
+  transition:opacity .22s ease,visibility .22s;
+}
+#overlay.show{opacity:1;visibility:visible;}
+.screen{
+  width:100%;max-width:330px;text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:10px;
+}
+.logo{
+  margin:0;font-size:clamp(48px,16vw,76px);font-weight:900;
+  letter-spacing:.14em;line-height:1;color:var(--accent);
+  text-shadow:0 0 30px var(--accent-glow),0 0 70px var(--accent-soft);
+}
+.sub{margin:0;color:var(--hint);font-size:14px;line-height:1.55;}
+.cta{
+  margin-top:10px;padding:14px 26px;border-radius:14px;
+  font-size:14px;font-weight:800;letter-spacing:.14em;color:var(--accent);
+  border:1px solid var(--accent-glow);
+  background:var(--accent-soft);
+  animation:pulse 1.7s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:.55;}50%{opacity:1;}}
+.bestline{margin:0;color:var(--hint);font-size:13px;}
+.bestline b{color:var(--text);}
+.overtitle{font-size:12px;font-weight:800;letter-spacing:.24em;color:var(--hint);}
+.bigscore{
+  font-size:clamp(56px,18vw,86px);font-weight:900;line-height:1;
+  color:var(--text);text-shadow:0 0 34px var(--accent-glow);
+  font-variant-numeric:tabular-nums;
+}
+.badge{
+  font-size:11px;font-weight:800;letter-spacing:.16em;color:#ffd166;
+  animation:pulse 1.2s ease-in-out infinite;
+}
+.stats{font-size:12px;color:var(--hint);letter-spacing:.04em;}
+.boardtitle{font-size:10px;font-weight:800;letter-spacing:.22em;color:var(--hint);margin-top:8px;}
+.board{width:100%;display:flex;flex-direction:column;gap:4px;}
+.brow{
+  display:flex;align-items:center;gap:8px;
+  background:rgba(255,255,255,.045);
+  border-radius:9px;padding:7px 11px;font-size:13px;
+}
+.brow.me{background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent-glow);}
+.brank{width:16px;text-align:left;color:var(--hint);font-size:11px;font-weight:700;}
+.bscore{flex:1;text-align:left;font-weight:800;font-variant-numeric:tabular-nums;}
+.bdate{color:var(--hint);font-size:10px;}
+.hidden{display:none !important;}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <button id="mute" aria-label="Звук">🔊</button>
+    <div id="score">0</div>
+    <div id="best">РЕКОРД 0</div>
+  </div>
+
+  <div id="overlay">
+    <div class="screen" id="screen-start">
+      <h1 class="logo">FLIP</h1>
+      <p class="sub">Тап — и гравитация перевернётся.<br>Уклоняйся от стен и лови искры.</p>
+      <div class="cta">ТАПНИ, ЧТОБЫ ИГРАТЬ</div>
+      <p class="bestline">Рекорд: <b id="startBest">0</b></p>
+    </div>
+
+    <div class="screen hidden" id="screen-over">
+      <div class="overtitle">ИГРА ОКОНЧЕНА</div>
+      <div class="bigscore" id="finalScore">0</div>
+      <div class="badge hidden" id="recordBadge">★ НОВЫЙ РЕКОРД ★</div>
+      <div class="stats" id="overStats"></div>
+      <div class="boardtitle">ЛУЧШИЕ РЕЗУЛЬТАТЫ</div>
+      <div class="board" id="board"></div>
+      <div class="cta">ИГРАТЬ СНОВА</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* =========================================================
+   1. TELEGRAM WEBAPP SDK
+   ========================================================= */
+var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+if (tg) {
+  try { tg.ready(); } catch(e){}
+  try { tg.expand(); } catch(e){}
+  try { if (tg.setHeaderColor) tg.setHeaderColor('bg_color'); } catch(e){}
+}
+
+/* =========================================================
+   2. ЦВЕТА / ТЕМА
+   ========================================================= */
+function rgba(hex, a){
+  if (typeof hex !== 'string') return 'rgba(255,255,255,' + a + ')';
+  var h = hex.trim().replace('#','');
+  if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  if (h.length !== 6) return 'rgba(255,255,255,' + a + ')';
+  var n = parseInt(h, 16);
+  if (isNaN(n)) return 'rgba(255,255,255,' + a + ')';
+  return 'rgba(' + ((n>>16)&255) + ',' + ((n>>8)&255) + ',' + (n&255) + ',' + a + ')';
+}
+
+var TP = (tg && tg.themeParams) || {};
+var COLORS = {
+  bg:      TP.bg_color                  || '#17212b',
+  surface: TP.secondary_bg_color        || '#232e3c',
+  text:    TP.text_color                || '#ffffff',
+  hint:    TP.hint_color                || '#7f91a4',
+  accent:  TP.button_color              || '#5288c1',
+  link:    TP.link_color                || '#6ab3f3',
+  danger:  TP.destructive_text_color    || '#ec3942'
+};
+
+function applyTheme(){
+  var r = document.documentElement.style;
+  r.setProperty('--bg', COLORS.bg);
+  r.setProperty('--surface', COLORS.surface);
+  r.setProperty('--text', COLORS.text);
+  r.setProperty('--hint', COLORS.hint);
+  r.setProperty('--accent', COLORS.accent);
+  r.setProperty('--link', COLORS.link);
+  r.setProperty('--danger', COLORS.danger);
+  r.setProperty('--accent-glow', rgba(COLORS.accent, 0.55));
+  r.setProperty('--accent-soft', rgba(COLORS.accent, 0.18));
+  var m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', COLORS.bg);
+}
+applyTheme();
+
+if (tg && tg.onEvent) {
+  try {
+    tg.onEvent('themeChanged', function(){
+      var t = tg.themeParams || {};
+      if (t.bg_color)                COLORS.bg      = t.bg_color;
+      if (t.secondary_bg_color)      COLORS.surface = t.secondary_bg_color;
+      if (t.text_color)              COLORS.text    = t.text_color;
+      if (t.hint_color)              COLORS.hint    = t.hint_color;
+      if (t.button_color)            COLORS.accent  = t.button_color;
+      if (t.link_color)              COLORS.link    = t.link_color;
+      if (t.destructive_text_color)  COLORS.danger  = t.destructive_text_color;
+      applyTheme();
+    });
+  } catch(e){}
+}
+
+/* =========================================================
+   3. DOM
+   ========================================================= */
+var canvas       = document.getElementById('game');
+var ctx          = canvas.getContext('2d');
+var appEl        = document.getElementById('app');
+var overlay      = document.getElementById('overlay');
+var screenStart  = document.getElementById('screen-start');
+var screenOver   = document.getElementById('screen-over');
+var scoreEl      = document.getElementById('score');
+var bestEl       = document.getElementById('best');
+var startBestEl  = document.getElementById('startBest');
+var finalScoreEl = document.getElementById('finalScore');
+var recordBadge  = document.getElementById('recordBadge');
+var overStatsEl  = document.getElementById('overStats');
+var boardEl      = document.getElementById('board');
+var muteBtn      = document.getElementById('mute');
+
+/* =========================================================
+   4. КАНВАС И РАЗМЕТКА
+   ========================================================= */
+var W = 0, H = 0, DPR = 1;
+var L = { wall:54, ceilY:54, floorY:600, size:28, playerX:100 };
+var P = { x:100, y:560, w:28, h:28 };
+
+function computeLayout(){
+  L.wall    = Math.round(Math.min(60, Math.max(44, H * 0.062)));
+  L.ceilY   = L.wall;
+  L.floorY  = H - L.wall;
+  L.size    = Math.round(Math.min(34, Math.max(22, Math.min(W, H) * 0.075)));
+  L.playerX = Math.round(Math.max(46, Math.min(W * 0.22, 130)));
+
+  P.w = L.size;
+  P.h = L.size;
+  P.x = L.playerX;
+  var maxY = L.floorY - P.h;
+  if (typeof P.y !== 'number' || P.y < L.ceilY || P.y > maxY) P.y = maxY;
+
+  document.documentElement.style.setProperty('--wall', L.ceilY + 'px');
+}
+
+function resize(){
+  var rect = appEl.getBoundingClientRect();
+  W = Math.max(240, Math.round(rect.width));
+  H = Math.max(360, Math.round(rect.height));
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+  canvas.width  = Math.round(W * DPR);
+  canvas.height = Math.round(H * DPR);
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  computeLayout();
+}
+
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', function(){ setTimeout(resize, 120); });
+
+/* =========================================================
+   5. КОНФИГ
+   ========================================================= */
+var CFG = {
+  baseSpeed:  340,     // px/сек на старте
+  maxSpeed:   920,     // предел скорости
+  speedRamp:  15,      // +px/сек за секунду
+  startGap:   1.30,    // сек между препятствиями на старте
+  minGap:     0.75,    // минимальный интервал (предел сложности)
+  gapRamp:    0.0095,  // уменьшение интервала за секунду
+  gravity:    3600,
+  kick:       360,     // импульс при флипе
+  scorePerPx: 0.06,
+  orbValue:   5
+};
+
+var TAU = Math.PI * 2;
+
+/* =========================================================
+   6. СОСТОЯНИЕ
+   ========================================================= */
+var state = 'menu';          // menu | playing | over
+var elapsed = 0;
+var speed = CFG.baseSpeed;
+var gapTime = CFG.startGap;
+var distance = 0;
+var orbScore = 0;
+var orbsCollected = 0;
+var score = 0;
+var gravityDir = 1;
+var vy = 0;
+var spawnTimer = 0;
+var scrollX = 0;
+var wallFlash = 0;
+var shake = 0;
+var deathTimer = 0;
+var canRestart = false;
+var newRecord = false;
+var deadPlayer = false;
+var lastSide = 1;
+var lastEntryId = null;
+var lastShownScore = -1;
+
+var obstacles = [];
+var orbs = [];
+var particles = [];
+var trail = [];
+
+/* =========================================================
+   7. ТАБЛИЦА ЛИДЕРОВ (localStorage)
+   ========================================================= */
+var LS_KEY = 'flip_arcade_scores_v1';
+
+function loadScores(){
+  try {
+    var raw = localStorage.getItem(LS_KEY);
+    var arr = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(function(e){ return e && typeof e.s === 'number' && isFinite(e.s); });
+  } catch(e){ return []; }
+}
+
+function getBest(){
+  var a = loadScores();
+  return a.length ? a[0].s : 0;
+}
+
+function saveScore(s){
+  var arr = loadScores();
+  var entry = { s: s, d: Date.now(), id: Math.random().toString(36).slice(2, 9) };
+  arr.push(entry);
+  arr.sort(function(a, b){ return b.s - a.s || a.d - b.d; });
+  var top = arr.slice(0, 10);
+  try { localStorage.setItem(LS_KEY, JSON.stringify(top)); } catch(e){}
+  return { top: top, id: entry.id };
+}
+
+function fmtDate(ts){
+  try {
+    return new Date(ts).toLocaleDateString(undefined, { day:'numeric', month:'short' });
+  } catch(e){ return ''; }
+}
+
+/* =========================================================
+   8. ЗВУК (WebAudio, опционально)
+   ========================================================= */
+var audioCtx = null;
+var audioOn = true;
+try { audioOn = localStorage.getItem('flip_sound') !== '0'; } catch(e){}
+
+function initAudio(){
+  if (!audioCtx) {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) audioCtx = new AC();
+    } catch(e){ audioCtx = null; }
+  }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    try { audioCtx.resume(); } catch(e){}
+  }
+}
+
+function tone(freq, dur, type, vol, slideTo){
+  if (!audioCtx || !audioOn) return;
+  try {
+    var t0 = audioCtx.currentTime;
+    var osc = audioCtx.createOscillator();
+    var gain = audioCtx.createGain();
+    osc.type = type || 'sine';
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(vol || 0.06, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.03);
+  } catch(e){}
+}
+
+function updateMuteBtn(){
+  muteBtn.textContent = audioOn ? '🔊' : '🔇';
+}
+updateMuteBtn();
+
+muteBtn.addEventListener('pointerdown', function(e){
+  e.stopPropagation();
+  e.preventDefault();
+  audioOn = !audioOn;
+  try { localStorage.setItem('flip_sound', audioOn ? '1' : '0'); } catch(err){}
+  updateMuteBtn();
+  if (audioOn) { initAudio(); tone(700, 0.08, 'sine', 0.05, 900); }
+});
+
+/* =========================================================
+   9. ТАКТИЛЬНАЯ ОТДАЧА
+   ========================================================= */
+function haptic(style){
+  if (!tg || !tg.HapticFeedback) return;
+  try {
+    if (style === 'error' || style === 'success' || style === 'warning') {
+      tg.HapticFeedback.notificationOccurred(style);
+    } else {
+      tg.HapticFeedback.impactOccurred(style);
+    }
+  } catch(e){}
+}
+
+/* =========================================================
+   10. ЧАСТИЦЫ
+   ========================================================= */
+function burst(x, y, color, count, spd){
+  for (var i = 0; i < count; i++) {
+    var a = Math.random() * TAU;
+    var v = (0.25 + Math.random() * 0.85) * spd;
+    var life = 0.35 + Math.random() * 0.55;
+    particles.push({
+      x: x, y: y,
+      vx: Math.cos(a) * v,
+      vy: Math.sin(a) * v,
+      life: life,
+      maxLife: life,
+      size: 1.8 + Math.random() * 3.2,
+      color: color
+    });
+  }
+  if (particles.length > 400) particles.splice(0, particles.length - 400);
+}
+
+function updateParticles(dt){
+  for (var i = particles.length - 1; i >= 0; i--) {
+    var p = particles[i];
+    p.life -= dt;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    p.vx *= (1 - 2.2 * dt);
+    p.vy *= (1 - 2.2 * dt);
+    p.vy += 720 * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+}
+
+function drawParticles(){
+  for (var i = 0; i < particles.length; i++) {
+    var p = particles[i];
+    var k = p.life / p.maxLife;
+    ctx.globalAlpha = k;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, Math.max(0.4, p.size * k), 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* =========================================================
+   11. УТИЛИТЫ РИСОВАНИЯ
+   ========================================================= */
+function rr(x, y, w, h, r){
+  r = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y,     x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x,     y + h, r);
+  ctx.arcTo(x,     y + h, x,     y,     r);
+  ctx.arcTo(x,     y,     x + w, y,     r);
+  ctx.closePath();
+}
+
+function rectHit(a, b){
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+/* =========================================================
+   12. ИГРОВАЯ ЛОГИКА
+   ========================================================= */
+function resetGame(){
+  elapsed = 0;
+  speed = CFG.baseSpeed;
+  gapTime = CFG.startGap;
+  distance = 0;
+  orbScore = 0;
+  orbsCollected = 0;
+  score = 0;
+  gravityDir = 1;
+  vy = 0;
+  spawnTimer = -0.7;
+  scrollX = 0;
+  wallFlash = 0;
+  shake = 0;
+  deathTimer = 0;
+  canRestart = false;
+  deadPlayer = false;
+  newRecord = false;
+  lastSide = 1;
+  obstacles.length = 0;
+  orbs.length = 0;
+  particles.length = 0;
+  trail.length = 0;
+
+  P.w = L.size;
+  P.h = L.size;
+  P.x = L.playerX;
+  P.y = L.floorY - P.h;
+
+  lastShownScore = -1;
+}
+
+function spawnObstacle(){
+  var band = L.floorY - L.ceilY;
+
+  // 70% шанс, что сторона сменится — игрок будет вынужден флипнуть
+  var side = Math.random() < 0.7 ? -lastSide : lastSide;
+  lastSide = side;
+
+  var h = band * (0.16 + Math.random() * 0.26);
+  var w = 24 + Math.random() * 16 + Math.min(26, elapsed * 1.2);
+
+  obstacles.push({
+    x: W + 12,
+    w: w,
+    h: h,
+    side: side,
+    y: side > 0 ? (L.floorY - h) : L.ceilY
+  });
+
+  // Искра в середине следующего промежутка — награда за риск
+  if (Math.random() < 0.6 && orbs.length < 4) {
+    var gapPx = gapTime * speed;
+    orbs.push({
+      x: W + 12 + w + gapPx * 0.5,
+      y: L.ceilY + band * (0.38 + Math.random() * 0.24),
+      r: 9,
+      phase: Math.random() * TAU
+    });
+  }
+}
+
+function collectOrb(ob){
+  orbScore += CFG.orbValue;
+  orbsCollected++;
+  burst(ob.x, ob.y, COLORS.link, 12, 230);
+  haptic('soft');
+  tone(880, 0.1, 'sine', 0.05, 1400);
+  popScore();
+}
+
+function popScore(){
+  scoreEl.classList.remove('pop');
+  void scoreEl.offsetWidth;
+  scoreEl.classList.add('pop');
+}
+
+function flip(){
+  gravityDir *= -1;
+  vy = gravityDir * CFG.kick;
+  wallFlash = Math.max(wallFlash, 0.55);
+  burst(P.x + P.w / 2, P.y + P.h / 2, COLORS.accent, 7, 170);
+  haptic('light');
+  if (gravityDir < 0) tone(520, 0.08, 'triangle', 0.04, 780);
+  else                tone(430, 0.08, 'triangle', 0.04, 640);
+}
+
+function die(){
+  if (state !== 'playing') return;
+  state = 'over';
+  deadPlayer = true;
+  deathTimer = 0;
+  shake = 16;
+  burst(P.x + P.w / 2, P.y + P.h / 2, COLORS.accent, 30, 430);
+  burst(P.x + P.w / 2, P.y + P.h / 2, COLORS.danger, 14, 260);
+  haptic('error');
+  tone(300, 0.4, 'sawtooth', 0.09, 60);
+
+  var prevBest = getBest();
+  newRecord = score > prevBest && score > 0;
+
+  var res = saveScore(score);
+  lastEntryId = res.id;
+
+  setTimeout(function(){
+    if (state === 'over') showGameOver(res.top);
+  }, 520);
+}
+
+function startGame(){
+  resetGame();
+  state = 'playing';
+  overlay.classList.remove('show');
+  initAudio();
+  haptic('medium');
+  tone(660, 0.1, 'triangle', 0.05, 900);
+  refreshBest();
+}
+
+/* =========================================================
+   13. ОБНОВЛЕНИЕ
+   ========================================================= */
+function stepGame(dt){
+  scrollX += (state === 'playing' ? speed * 0.55 : 45) * dt;
+  if (wallFlash > 0) wallFlash = Math.max(0, wallFlash - dt * 2.2);
+  if (shake > 0)     shake     = Math.max(0, shake - dt * 45);
+
+  updateParticles(dt);
+
+  if (state === 'playing') {
+    elapsed += dt;
+    speed   = Math.min(CFG.maxSpeed, CFG.baseSpeed + elapsed * CFG.speedRamp);
+    gapTime = Math.max(CFG.minGap,    CFG.startGap - elapsed * CFG.gapRamp);
+
+    // --- физика игрока ---
+    vy += CFG.gravity * gravityDir * dt;
+    P.y += vy * dt;
+
+    if (P.y < L.ceilY) {
+      P.y = L.ceilY;
+      if (vy < 0) vy = 0;
+    }
+    var maxY = L.floorY - P.h;
+    if (P.y > maxY) {
+      P.y = maxY;
+      if (vy > 0) vy = 0;
+    }
+
+    // --- след ---
+    trail.push({ x: P.x, y: P.y });
+    if (trail.length > 9) trail.shift();
+
+    // --- очки ---
+    distance += speed * dt;
+    score = Math.floor(distance * CFG.scorePerPx) + orbScore;
+
+    // --- спавн ---
+    spawnTimer += dt;
+    var guard = 0;
+    while (spawnTimer >= gapTime && guard < 5) {
+      spawnTimer -= gapTime;
+      spawnObstacle();
+      guard++;
+    }
+
+    // --- препятствия ---
+    var hb = { x: P.x + 4, y: P.y + 4, w: P.w - 8, h: P.h - 8 };
+    for (var i = obstacles.length - 1; i >= 0; i--) {
+      var o = obstacles[i];
+      o.x -= speed * dt;
+      if (o.x + o.w < -40) { obstacles.splice(i, 1); continue; }
+      if (rectHit(hb, o)) { die(); return; }
+    }
+
+    // --- искры ---
+    for (var j = orbs.length - 1; j >= 0; j--) {
+      var ob = orbs[j];
+      ob.x -= speed * dt;
+      ob.phase += dt * 5;
+      if (ob.x < -40) { orbs.splice(j, 1); continue; }
+      if (ob.x > P.x - ob.r && ob.x < P.x + P.w + ob.r &&
+          ob.y > P.y - ob.r && ob.y < P.y + P.h + ob.r) {
+        collectOrb(ob);
+        orbs.splice(j, 1);
+      }
+    }
+  } else if (state === 'over') {
+    deathTimer += dt;
+  }
+}
+
+var MAX_STEP = 1 / 120;
+
+function update(dt){
+  var remaining = dt;
+  var guard = 0;
+  while (remaining > 0 && guard < 12) {
+    var step = Math.min(MAX_STEP, remaining);
+    stepGame(step);
+    remaining -= step;
+    guard++;
+  }
+  updateHUD();
+}
+
+function updateHUD(){
+  if (score !== lastShownScore) {
+    lastShownScore = score;
+    scoreEl.textContent = score;
+  }
+}
+
+/* =========================================================
+   14. РЕНДЕР
+   ========================================================= */
+function drawBackground(){
+  ctx.fillStyle = COLORS.bg;
+  ctx.fillRect(-40, -40, W + 80, H + 80);
+
+  var step = 56;
+  var off = scrollX % step;
+  ctx.strokeStyle = rgba(COLORS.text, 0.035);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (var x = -off; x < W + step; x += step) {
+    ctx.moveTo(Math.round(x) + 0.5, L.ceilY);
+    ctx.lineTo(Math.round(x) + 0.5, L.floorY);
+  }
+  ctx.stroke();
+}
+
+function drawWalls(){
+  ctx.fillStyle = COLORS.surface;
+  ctx.fillRect(0, 0, W, L.ceilY);
+  ctx.fillRect(0, L.floorY, W, H - L.floorY);
+
+  var f = wallFlash;
+  var glow = rgba(COLORS.accent, 0.10 + 0.30 * f);
+
+  var g = ctx.createLinearGradient(0, L.ceilY, 0, L.ceilY + 46);
+  g.addColorStop(0, glow);
+  g.addColorStop(1, rgba(COLORS.accent, 0));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, L.ceilY, W, 46);
+
+  g = ctx.createLinearGradient(0, L.floorY, 0, L.floorY - 46);
+  g.addColorStop(0, glow);
+  g.addColorStop(1, rgba(COLORS.accent, 0));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, L.floorY - 46, W, 46);
+
+  ctx.fillStyle = rgba(COLORS.accent, 0.8);
+  ctx.fillRect(0, L.ceilY - 2, W, 2);
+  ctx.fillRect(0, L.floorY, W, 2);
+}
+
+function drawObstacles(t){
+  for (var i = 0; i < obstacles.length; i++) {
+    var o = obstacles[i];
+    var pulse = 0.7 + 0.3 * Math.sin(t * 6 + o.x * 0.02);
+
+    ctx.shadowColor = rgba(COLORS.danger, 0.65 * pulse);
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = COLORS.danger;
+    rr(o.x, o.y, o.w, o.h, 7);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // «аварийные» полосы
+    ctx.save();
+    rr(o.x, o.y, o.w, o.h, 7);
+    ctx.clip();
+    ctx.fillStyle = rgba('#000000', 0.20);
+    for (var y = o.y + 5; y < o.y + o.h - 3; y += 16) {
+      ctx.fillRect(o.x, y, o.w, 8);
+    }
+    ctx.restore();
+  }
+}
+
+function drawOrbs(t){
+  for (var i = 0; i < orbs.length; i++) {
+    var ob = orbs[i];
+    var p = 0.78 + 0.22 * Math.sin(ob.phase);
+    ctx.shadowColor = rgba(COLORS.link, 0.9);
+    ctx.shadowBlur = 16 * p;
+    ctx.fillStyle = COLORS.link;
+    ctx.beginPath();
+    ctx.arc(ob.x, ob.y, ob.r * p, 0, TAU);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = rgba('#ffffff', 0.75);
+    ctx.beginPath();
+    ctx.arc(ob.x - ob.r * 0.25, ob.y - ob.r * 0.25, ob.r * 0.28, 0, TAU);
+    ctx.fill();
+  }
+}
+
+function drawPlayer(){
+  // след
+  for (var i = 0; i < trail.length; i++) {
+    var p = trail[i];
+    var k = (i + 1) / trail.length;      // 1 = самый свежий
+    var s = P.w * (0.45 + 0.55 * k);
+    ctx.fillStyle = rgba(COLORS.accent, 0.04 + 0.16 * k);
+    rr(P.x + (P.w - s) / 2, p.y + (P.h - s) / 2, s, s, 6);
+    ctx.fill();
+  }
+
+  // тело
+  ctx.shadowColor = rgba(COLORS.accent, 0.9);
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = COLORS.accent;
+  rr(P.x, P.y, P.w, P.h, 8);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // блик
+  ctx.fillStyle = rgba(COLORS.text, 0.55);
+  rr(P.x + P.w * 0.26, P.y + P.h * 0.26, P.w * 0.48, P.h * 0.48, 4);
+  ctx.fill();
+}
+
+function render(){
+  var t = performance.now() / 1000;
+
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.save();
+  if (shake > 0.5) {
+    ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+  }
+
+  drawBackground();
+  drawWalls();
+  drawOrbs(t);
+  drawObstacles(t);
+  if (!deadPlayer) drawPlayer();
+  drawParticles();
+
+  ctx.restore();
+}
+
+/* =========================================================
+   15. ЦИКЛ
+   ========================================================= */
+var lastT = 0;
+
+function loop(now){
+  requestAnimationFrame(loop);
+  if (!lastT) lastT = now;
+  var dt = (now - lastT) / 1000;
+  lastT = now;
+  if (dt > 0.05) dt = 0.05;
+  if (dt < 0) dt = 0;
+
+  update(dt);
+  render();
+}
+
+/* =========================================================
+   16. ЭКРАНЫ
+   ========================================================= */
+function refreshBest(){
+  var b = getBest();
+  bestEl.textContent = 'РЕКОРД ' + b;
+  startBestEl.textContent = b;
+}
+
+function renderBoard(top){
+  boardEl.innerHTML = '';
+  if (!top || !top.length) return;
+
+  var medals = ['🥇', '🥈', '🥉'];
+
+  for (var i = 0; i < Math.min(top.length, 5); i++) {
+    var e = top[i];
+    var row = document.createElement('div');
+    row.className = 'brow' + (e.id === lastEntryId ? ' me' : '');
+
+    var rank = document.createElement('span');
+    rank.className = 'brank';
+    rank.textContent = medals[i] || (i + 1) + '.';
+
+    var sc = document.createElement('span');
+    sc.className = 'bscore';
+    sc.textContent = e.s;
+
+    var dt = document.createElement('span');
+    dt.className = 'bdate';
+    dt.textContent = fmtDate(e.d);
+
+    row.appendChild(rank);
+    row.appendChild(sc);
+    row.appendChild(dt);
+    boardEl.appendChild(row);
+  }
+}
+
+function showGameOver(top){
+  canRestart = true;
+
+  finalScoreEl.textContent = score;
+  recordBadge.classList.toggle('hidden', !newRecord);
+  overStatsEl.textContent = 'Искры: ' + orbsCollected + ' · Рекорд: ' + getBest();
+  renderBoard(top);
+
+  overlay.classList.add('show');
+  screenStart.classList.add('hidden');
+  screenOver.classList.remove('hidden');
+
+  refreshBest();
+  if (newRecord) haptic('success');
+}
+
+function showStart(){
+  overlay.classList.add('show');
+  screenStart.classList.remove('hidden');
+  screenOver.classList.add('hidden');
+  refreshBest();
+}
+
+/* =========================================================
+   17. ВВОД
+   ========================================================= */
+function onPress(e){
+  if (e && e.cancelable) e.preventDefault();
+
+  if (state === 'menu') {
+    startGame();
+  } else if (state === 'playing') {
+    flip();
+  } else if (state === 'over' && canRestart) {
+    startGame();
+  }
+}
+
+window.addEventListener('pointerdown', onPress, { passive: false });
+
+window.addEventListener('keydown', function(e){
+  if (e.repeat) return;
+  if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'Enter' || e.code === 'KeyW') {
+    e.preventDefault();
+    onPress(null);
+  }
+}, { passive: false });
+
+// блокируем контекстное меню на долгий тап
+window.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+
+document.addEventListener('visibilitychange', function(){
+  if (!document.hidden) lastT = 0;
+});
+
+/* =========================================================
+   18. СТАРТ
+   ========================================================= */
+resize();
+resetGame();
+refreshBest();
+showStart();
+requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
